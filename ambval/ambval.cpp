@@ -33,39 +33,51 @@ static char   		*myName  = NULL;
 static double 		luxVal   = 0.0;
 static int    		hiByte   = -1;
 static int    		loByte   = -1;
-static unsigned int	readValue= -1;
 
 //read ambient light value based on ti_opt3007_I2C_read
-static uint16_t ambRead(uint8_t registerAddress)
+static uint16_t ambRead (char address, int *hi, int *lo)
 {
-	//I2C read operation and return uint16_t value as per datasheet
-	//Data should be in first byte received from I2C denotes 15:8 and 2nd byte from I2C denotes 7:0
+	// I2C read operation and return uint16_t value as per datasheet
+	// Data should be in first byte received from I2C denotes 15:8 and 2nd byte from I2C denotes 7:0
 
-	uint16_t returnValue=0;
 #ifdef RASPBERRY_PI
-    char *fileName=(char*)"/dev/i2c-1";
+    char *fileName = (char*)"/dev/i2c-1";
     int fileI2C;
     uint8_t buffer[2];
 
-    if((fileI2C=open(fileName,O_RDWR))<0)
+    if ((fileI2C = open(fileName, O_RDWR)) < 0)
+	{
         printf("ERROR:Not able to perform I2C operation\n");
+		return -1;
+	}
 
-    if(ioctl(fileI2C,I2C_SLAVE,TI_OPT3007_BUSADDRESS)<0)
+    if (ioctl(fileI2C, I2C_SLAVE, address) < 0)
+	{
         printf("ERROR:Unable to set I2C address\n");
+		return -1;
+	}
 
-    if(write(fileI2C,&registerAddress,1)!=1)
+    if (write(fileI2C, &address, 1) != 1)
+	{
         printf("ERROR:Write operation to set read register address failed\n");
+		return -1;
+	}
 
-    if(read(fileI2C,buffer,2)!=2)
+    if (read(fileI2C, buffer, 2) != 2)
+	{
         printf("ERROR:Read operation failed\n");
+		return -1;
+	}
 
-    returnValue=buffer[1] | (((uint16_t)buffer[0])<<8);
+	*lo = buffer[1];
+	*hi = buffer[0];
+	
+    uint16_t returnValue = buffer[1] | (((uint16_t)buffer[0])<<8);
 
     printf("INFO:I2C Read operation Value from register 0x%02x is 0x%02x\n",
-    	registerAddress,returnValue);
+    	address,returnValue);
 #endif
-	return returnValue;
-
+	return 1;
 }
 
 static void showUsage ()
@@ -74,9 +86,10 @@ static void showUsage ()
     exit (1);
 }
 
-static void parseOptions (int argc, char *argv[])
+static int parseOptions (int argc, char *argv[])
 {
-    int opt;
+	int rspec = 0;
+	int opt;
 
     myName = argv[0];
 
@@ -98,15 +111,24 @@ static void parseOptions (int argc, char *argv[])
             case '?':  
                 printf("unknown option: %c\n", optopt);
                 break;
-			case 'r':
-				readValue = ambRead(0xa1);	//hard-coded register address
+			case 'r':				
+				rspec = ambRead (TI_OPT3007_BUSADDRESS, &hiByte, &loByte);
+				break;
         }
     }
+	
+	if (rspec == -1)
+	{
+		printf("OPERATION FAILED");
+		exit(0);
+	}
+	
+	return rspec;
 }
 
 double getAmb (int hi, int lo)
 {
-    readValue = (hi << 8) | (lo & 0xff);
+    uint16_t readValue = (hi << 8) | (lo & 0xff);
     printf ("%s: Hi 0x%02x Lo 0x%02x rv 0x%04x\n", 
                   myName, hi, lo, readValue);
 
@@ -118,36 +140,14 @@ double getAmb (int hi, int lo)
     return val;
 }
 
-//	overloaded getAmb for ambient light reading
-double getAmb (uint16_t readValue)
-{
-	unsigned int mantissa = readValue & 0x0fff ;
-	unsigned int exp      = readValue >> 12;
-	printf ("%s: ma %04d exp %04d\n", myName, mantissa, exp);
-	
-	double val = 10e-3 * (((uint16_t) 1)<<exp) * mantissa ;
-	return val;
-}
-
 int main (int argc, char *argv[])
 {
     parseOptions (argc, argv);
-    if (((hiByte == -1) || (loByte == -1)) && readValue == -1)
+    if ((hiByte == -1) || (loByte == -1))
     {
         showUsage ();
         return -1;
     }
-	
-	//for manual input
-    if (readValue == -1)
-    {
-    	printf ("%s: Calculated lux value is %f.\n",
-    			 myName, getAmb(hiByte, loByte));
-    }
-	//for ambient light reading
-    else 
-    {
-    	printf ("%s: Calculated lux value is %f.\n",
-    	    			 myName, getAmb((uint16_t)readValue));
-    }
+    printf ("%s: Calculated lux value is %f.\n",
+    		myName, getAmb(hiByte, loByte));
 }
